@@ -335,11 +335,11 @@
       const [sortConfig, setSortConfig] = useState({ key: 'spend', direction: 'desc' });
 
       // 💡 추가된 카테고리의 예산 기본값 세팅
-      const [budgets, setBudgets] = useState({'TV': 28000000, '에어컨': 15000000, '시스템에어컨': 5000000, '공기청정기': 5000000, '청소기': 10000000, '제습기': 1000000, 'SD': 2000000, '그 외 상품': 1000000});
+      const [budgets, setBudgets] = useState({'TV': 23000000, '에어컨': 20000000, '시스템에어컨': 5000000, '공기청정기': 5000000, '청소기': 10000000, '제습기': 1000000, 'SD': 2000000, '그 외 상품': 1000000});
       // 💡 추가된 카테고리의 목표 ROAS 기본값 세팅
       const [targetRoas, setTargetRoas] = useState({'전체': 4000, 'TV': 5000, '에어컨': 2500, '시스템에어컨': 3000, '공기청정기': 1800, '청소기': 2000, '제습기': 1500, 'SD': 2000, '그 외 상품': 4000});
       // 💡 추가된 카테고리의 목표 CVR 기본값 세팅
-      const [targetCvr, setTargetCvr] = useState({'전체': 3.5, 'TV': 2.5, '에어컨': 1.7, '시스템에어컨': 1.5, '공기청정기': 8, '청소기': 2.5, '제습기': 2, 'SD': 2.0, '그 외 상품': 3});
+      const [targetCvr, setTargetCvr] = useState({'전체': 3.5, 'TV': 2.5, '에어컨': 1.7, '시스템에어컨': 1.5, '공기청정기': 3, '청소기': 2.5, '제습기': 2, 'SD': 2.0, '그 외 상품': 8});
 
       const cleanNum = (val) => { if (!val) return 0; const num = Number(val.toString().replace(/,/g, '').trim()); return isNaN(num) ? 0 : num; };
 
