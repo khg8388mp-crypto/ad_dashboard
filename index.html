@@ -65,20 +65,20 @@
     // 2. 화면 구성 부품(Components)
     // ==========================================
     
-    const AD_TYPES = ['전체', '쇼핑검색', '파워링크'];
+    const PAGES = ['SA', 'GFA'];
 
-    const TopHeader = ({ adType, setAdType }) => (
+    const TopHeader = ({ page, setPage }) => (
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
         <img src="LOGO.jpg" alt="보보 로고" className="h-10 sm:h-16 w-auto object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
         <div className="flex-1">
-          <h1 className="text-[18px] sm:text-[24px] font-black text-slate-900 flex items-center gap-2">네이버 보보 SA 광고 성과 리포트</h1>
+          <h1 className="text-[18px] sm:text-[24px] font-black text-slate-900 flex items-center gap-2">네이버 보보 광고 성과 리포트</h1>
           <p className="text-slate-500 text-[11px] sm:text-[13px] font-bold mt-1">삼성 공식 파트너 주식회사 보보 X 광고명가 광고 리포트</p>
         </div>
         <div className="flex bg-slate-100 p-1 rounded-xl gap-1 shrink-0">
-          {AD_TYPES.map(t => (
-            <button key={t} onClick={() => setAdType(t)}
-              className={`px-3 sm:px-5 py-1.5 sm:py-2 text-[12px] sm:text-[14px] font-bold rounded-lg transition-all whitespace-nowrap ${adType === t ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:bg-white/50'}`}>
-              {t === '전체' ? '전체 SA' : t}
+          {PAGES.map(p => (
+            <button key={p} onClick={() => setPage(p)}
+              className={`px-5 sm:px-8 py-1.5 sm:py-2 text-[12px] sm:text-[14px] font-bold rounded-lg transition-all whitespace-nowrap ${page === p ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:bg-white/50'}`}>
+              {p}
             </button>
           ))}
         </div>
@@ -339,7 +339,7 @@
       const [isLoading, setIsLoading] = useState(true);
       const [loadError, setLoadError] = useState(false);
 
-      const [adType, setAdType] = useState('전체');
+      const [page, setPage] = useState('SA');
       const [selectedMonths, setSelectedMonths] = useState(ALL_MONTHS);
       const [selectedCategory, setSelectedCategory] = useState('전체');
       const [pivotCategory, setPivotCategory] = useState('전체');
@@ -382,11 +382,8 @@
       }, []);
 
       const dateFilteredData = useMemo(() => {
-        return rawData.filter(d =>
-          selectedMonths.includes(d.month) &&
-          (adType === '전체' || d.adType === adType)
-        );
-      }, [rawData, selectedMonths, adType]);
+        return rawData.filter(d => selectedMonths.includes(d.month));
+      }, [rawData, selectedMonths]);
 
       const finalFilteredData = useMemo(() => {
         return selectedCategory === '전체' ? dateFilteredData : dateFilteredData.filter(d => d.category === selectedCategory);
@@ -460,20 +457,30 @@
         <div className="min-h-screen bg-slate-50 p-2 sm:p-4 md:p-8 text-slate-900">
           <div className="max-w-[1400px] mx-auto">
             
-            <TopHeader adType={adType} setAdType={setAdType} />
+            <TopHeader page={page} setPage={setPage} />
 
-            <FiltersSection selectedMonths={selectedMonths} setSelectedMonths={setSelectedMonths} selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} />
+            {page === 'GFA' ? (
+              <div className="flex flex-col items-center justify-center py-32 text-slate-400">
+                <div className="text-[48px] mb-4">📊</div>
+                <div className="text-[20px] font-bold mb-2">GFA 페이지 준비 중</div>
+                <div className="text-[14px]">GFA 광고 데이터 연동 후 이 페이지가 활성화됩니다.</div>
+              </div>
+            ) : (
+              <>
+                <FiltersSection selectedMonths={selectedMonths} setSelectedMonths={setSelectedMonths} selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} />
 
-            <BudgetStatusCard globalBurnRate={globalBurnRate} totalBudget={totalBudget} macroStats={macroStats} budgets={budgets} setBudgets={setBudgets} />
+                <BudgetStatusCard globalBurnRate={globalBurnRate} totalBudget={totalBudget} macroStats={macroStats} budgets={budgets} setBudgets={setBudgets} />
 
-            <SummaryMetrics selectedCategory={selectedCategory} stats={stats} currentResidual={currentResidual} currentBurnRatio={currentBurnRatio} />
+                <SummaryMetrics selectedCategory={selectedCategory} stats={stats} currentResidual={currentResidual} currentBurnRatio={currentBurnRatio} />
 
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-8 mb-6">
-              <TargetProgressCard title="카테고리별 목표 ROAS 달성 현황" icon="TrendingUp" colorTheme="green" dataKey="roas" targets={targetRoas} setTargets={setTargetRoas} macroStats={macroStats} isCvr={false} />
-              <TargetProgressCard title="카테고리별 목표 전환율 (CVR) 달성 현황" icon="Target" colorTheme="blue" dataKey="cvr" targets={targetCvr} setTargets={setTargetCvr} macroStats={macroStats} isCvr={true} />
-            </div>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-8 mb-6">
+                  <TargetProgressCard title="카테고리별 목표 ROAS 달성 현황" icon="TrendingUp" colorTheme="green" dataKey="roas" targets={targetRoas} setTargets={setTargetRoas} macroStats={macroStats} isCvr={false} />
+                  <TargetProgressCard title="카테고리별 목표 전환율 (CVR) 달성 현황" icon="Target" colorTheme="blue" dataKey="cvr" targets={targetCvr} setTargets={setTargetCvr} macroStats={macroStats} isCvr={true} />
+                </div>
 
-            <DetailTable pivotCategory={pivotCategory} setPivotCategory={setPivotCategory} sortedPivotData={sortedPivotData} handleSort={handleSort} sortConfig={sortConfig} />
+                <DetailTable pivotCategory={pivotCategory} setPivotCategory={setPivotCategory} sortedPivotData={sortedPivotData} handleSort={handleSort} sortConfig={sortConfig} />
+              </>
+            )}
 
           </div>
         </div>
