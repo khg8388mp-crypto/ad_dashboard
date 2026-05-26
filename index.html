@@ -17,13 +17,14 @@
     /* 모바일에서 스크롤바를 숨겨서 디자인을 깔끔하게 유지 (스와이프는 작동함) */
     .scrollbar-hide::-webkit-scrollbar { display: none; }
     .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useMemo, useEffect, useCallback } = React;
+    const { useState, useMemo, useEffect, useCallback, useRef } = React;
 
     // ==========================================
     // 1. 공통 아이콘 및 유틸리티
@@ -60,9 +61,473 @@
 
     const formatKrw = (val) => `₩ ${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(Math.round(val))}`;
     const formatNum = (val) => new Intl.NumberFormat('ko-KR').format(Math.round(val));
+    const formatPct = (val, d=2) => `${Number(val).toFixed(d)}%`;
+
+    const PAGE_SIZE = 20;
 
     // ==========================================
-    // 2. 화면 구성 부품(Components)
+    // 2. 공용 GFA 컴포넌트
+    // ==========================================
+
+    // 커스텀 툴팁 (테이블 overflow 클리핑 방지용 portal 방식)
+    const Tooltip = ({ text, children }) => {
+      const [pos, setPos] = useState(null);
+      const timerRef = useRef(null);
+      const handleEnter = (e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        const x = r.right + 12 + 280 > window.innerWidth ? r.left - 292 : r.right + 12;
+        timerRef.current = setTimeout(() => setPos({ x, y: r.top + r.height / 2 }), 120);
+      };
+      const handleLeave = () => { clearTimeout(timerRef.current); setPos(null); };
+      return (
+        <div className="relative inline-block w-full" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
+          {children}
+          {pos && ReactDOM.createPortal(
+            <div style={{ position:'fixed', left:pos.x, top:pos.y, transform:'translateY(-50%)', zIndex:9999, pointerEvents:'none' }}
+              className="bg-slate-900 text-white text-[12px] font-bold rounded-xl px-3 py-2 shadow-2xl max-w-[280px] whitespace-normal leading-relaxed border border-white/10">
+              {text}
+              <span style={{ position:'absolute', left:'-6px', top:'50%', transform:'translateY(-50%)',
+                borderWidth:'6px 6px 6px 0', borderStyle:'solid', borderColor:'transparent #1e293b transparent transparent' }} />
+            </div>, document.body
+          )}
+        </div>
+      );
+    };
+
+    // 페이지네이션
+    const Pagination = ({ page, totalPages, setPage }) => {
+      if (totalPages <= 1) return null;
+      return (
+        <div className="flex items-center justify-center gap-1 mt-4">
+          <button onClick={()=>setPage(1)} disabled={page===1} className="px-2 py-1.5 rounded-lg text-[12px] font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-30">«</button>
+          <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1} className="px-3 py-1.5 rounded-lg text-[12px] font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-30">‹ 이전</button>
+          {Array.from({length:totalPages},(_,i)=>i+1)
+            .filter(n=>n===1||n===totalPages||Math.abs(n-page)<=1)
+            .reduce((acc,n,idx,arr)=>{ if(idx>0&&n-arr[idx-1]>1) acc.push('…'); acc.push(n); return acc; },[])
+            .map((n,i)=> n==='…'
+              ? <span key={`e${i}`} className="px-2 text-slate-300 text-[12px]">…</span>
+              : <button key={n} onClick={()=>setPage(n)}
+                  className={`w-8 h-8 rounded-lg text-[12px] font-bold transition-all ${page===n?'bg-blue-600 text-white shadow-sm':'text-slate-500 hover:bg-slate-100'}`}>{n}</button>
+            )
+          }
+          <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages} className="px-3 py-1.5 rounded-lg text-[12px] font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-30">다음 ›</button>
+          <button onClick={()=>setPage(totalPages)} disabled={page===totalPages} className="px-2 py-1.5 rounded-lg text-[12px] font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-30">»</button>
+        </div>
+      );
+    };
+
+    // GFA 기간 선택 (SA와 동일한 스타일)
+    const GFAFilterSection = ({ selMonths, setSelMonths }) => {
+      const toggle    = (m) => setSelMonths(prev => prev.includes(m) ? prev.filter(x=>x!==m) : [...prev,m]);
+      const selectAll = () => setSelMonths(ALL_MONTHS);
+      const clearAll  = () => setSelMonths([]);
+      const thisMonth = () => setSelMonths([String(new Date().getMonth()+1)]);
+      return (
+        <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200 mb-4 sm:mb-6">
+          <div className="flex items-center gap-2 text-[14px] sm:text-[16px] text-slate-700 font-black mb-1 sm:mb-2">📅 2026년 분석 기간 선택</div>
+          <div className="flex flex-col gap-2 sm:gap-3">
+            <div className="flex flex-wrap gap-2 border-b border-slate-100 pb-2 sm:pb-3">
+              <button onClick={thisMonth} className="px-3 sm:px-4 py-1.5 rounded-lg text-[12px] sm:text-[13px] font-black bg-blue-100 text-blue-700 hover:bg-blue-200 transition-all shadow-sm">✨ 이번 달 보기</button>
+              <div className="w-px bg-slate-200 mx-1 hidden sm:block"></div>
+              <button onClick={selectAll} className="px-2 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-[12px] font-bold bg-slate-100 text-slate-600 hover:bg-slate-200">전체 선택</button>
+              <button onClick={clearAll}  className="px-2 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-[12px] font-bold bg-slate-100 text-slate-600 hover:bg-slate-200">전체 해제</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 sm:gap-2 pt-1">
+              {ALL_MONTHS.map(m => (
+                <button key={m} onClick={()=>toggle(m)}
+                  className={`w-10 sm:w-12 h-8 sm:h-9 rounded-lg text-[13px] sm:text-[14px] font-bold border transition-all ${selMonths.includes(m) ? 'bg-blue-50 text-blue-600 border-blue-200 shadow-sm' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>
+                  {m}월
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // GFA 전체 요약 바
+    const GFASummaryBar = ({ data }) => {
+      const s = useMemo(() => {
+        const spend=data.reduce((a,d)=>a+d.spend,0), imp=data.reduce((a,d)=>a+d.impressions,0),
+              clk=data.reduce((a,d)=>a+d.clicks,0),  conv=data.reduce((a,d)=>a+d.conv,0),
+              rev=data.reduce((a,d)=>a+d.revenue,0),  cart=data.reduce((a,d)=>a+d.cart,0);
+        return { spend,imp,clk,conv,rev,cart,
+                 roas:spend>0?(rev/spend)*100:0,
+                 ctr:imp>0?(clk/imp)*100:0,
+                 cvrConv:clk>0?(conv/clk)*100:0,
+                 cvrCart:clk>0?(cart/clk)*100:0 };
+      },[data]);
+      const cards = [
+        { label:'총 광고비',    val:formatKrw(s.spend),      sub:null,                                color:'text-amber-600'  },
+        { label:'노출수',       val:formatNum(s.imp),         sub:`CTR ${formatPct(s.ctr)}`,           color:'text-slate-500'  },
+        { label:'클릭수',       val:formatNum(s.clk),         sub:null,                                color:'text-blue-600'   },
+        { label:'구매전환수',   val:`${formatNum(s.conv)}건`, sub:`전환율(구매) ${formatPct(s.cvrConv)}`, color:'text-green-600'  },
+        { label:'전환매출',     val:formatKrw(s.rev),         sub:`ROAS ${formatPct(s.roas,0)}`,       color:'text-green-600'  },
+        { label:'장바구니',     val:`${formatNum(s.cart)}건`, sub:`전환율(장바구니) ${formatPct(s.cvrCart)}`, color:'text-purple-600' },
+      ];
+      return (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4 sm:mb-6">
+          {cards.map((c,i) => (
+            <div key={i} className="bg-white p-3 sm:p-4 rounded-2xl shadow-sm border border-slate-200">
+              <div className={`text-[11px] sm:text-[12px] font-bold ${c.color} mb-1`}>{c.label}</div>
+              <div className="text-[15px] sm:text-[18px] font-black text-slate-900">{c.val}</div>
+              {c.sub && <div className="text-[10px] sm:text-[11px] text-slate-400 font-bold mt-0.5">{c.sub}</div>}
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    // 애드부스트 모바일 카드
+    const AdvMobileCard = ({ r, rank }) => (
+      <div className="p-4 border-b border-slate-100 last:border-0">
+        <div className="flex items-start gap-2 mb-3">
+          <span className="text-[11px] text-slate-300 font-bold mt-0.5 shrink-0">#{rank}</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-0.5">
+              <span className={`font-black text-[15px] ${r.model==='(미매칭)'?'text-slate-400':'text-slate-900'}`}>{r.model}</span>
+              <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold whitespace-nowrap">{r.category}</span>
+            </div>
+            <div className="text-[11px] text-slate-400 font-bold line-clamp-2 leading-snug">{r.name}</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2 mb-2">
+          <div className="text-center bg-slate-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-amber-600 font-bold mb-0.5">집행비용</div>
+            <div className="text-[12px] font-black text-slate-900">{formatKrw(r.spend)}</div>
+          </div>
+          <div className="text-center bg-green-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-green-600 font-bold mb-0.5">구매전환</div>
+            <div className="text-[13px] font-black text-green-700">{r.conv}건</div>
+            <div className="text-[10px] text-green-500 font-bold">{formatPct(r.cvrConv)}</div>
+          </div>
+          <div className="text-center rounded-xl p-2.5" style={{background:r.roas>=400?'#f0fdf4':'#fff1f2'}}>
+            <div className="text-[10px] font-bold mb-0.5" style={{color:r.roas>=400?'#16a34a':'#e11d48'}}>ROAS</div>
+            <div className="text-[13px] font-black" style={{color:r.roas>=400?'#15803d':'#be123c'}}>{formatPct(r.roas,0)}</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="text-center bg-slate-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-slate-400 font-bold mb-0.5">전환매출</div>
+            <div className="text-[11px] font-black text-slate-700">{formatKrw(r.revenue)}</div>
+          </div>
+          <div className="text-center bg-purple-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-purple-600 font-bold mb-0.5">장바구니</div>
+            <div className="text-[13px] font-black text-purple-700">{r.cart}건</div>
+            <div className="text-[10px] text-purple-500 font-bold">{formatPct(r.cvrCart)}</div>
+          </div>
+          <div className="text-center bg-slate-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-slate-400 font-bold mb-0.5">클릭수</div>
+            <div className="text-[12px] font-black text-slate-600">{formatNum(r.clicks)}</div>
+          </div>
+        </div>
+      </div>
+    );
+
+    // 소재보고서 모바일 카드
+    const SojaMobileCard = ({ r }) => (
+      <div className="p-4 border-b border-slate-100 last:border-0">
+        <div className="font-black text-slate-900 text-[13px] mb-3 leading-snug">{r.campaign}</div>
+        <div className="grid grid-cols-3 gap-2 mb-2">
+          <div className="text-center bg-slate-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-amber-600 font-bold mb-0.5">집행비용</div>
+            <div className="text-[12px] font-black text-slate-900">{formatKrw(r.spend)}</div>
+          </div>
+          <div className="text-center bg-green-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-green-600 font-bold mb-0.5">구매전환</div>
+            <div className="text-[13px] font-black text-green-700">{r.conv}건</div>
+            <div className="text-[10px] text-green-500 font-bold">{formatPct(r.cvrConv)}</div>
+          </div>
+          <div className="text-center bg-purple-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-purple-600 font-bold mb-0.5">장바구니</div>
+            <div className="text-[13px] font-black text-purple-700">{r.cart}건</div>
+            <div className="text-[10px] text-purple-500 font-bold">{formatPct(r.cvrCart)}</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="text-center bg-slate-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-slate-400 font-bold mb-0.5">노출수</div>
+            <div className="text-[12px] font-black text-slate-600">{formatNum(r.impressions)}</div>
+          </div>
+          <div className="text-center bg-slate-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-slate-400 font-bold mb-0.5">클릭수</div>
+            <div className="text-[12px] font-black text-slate-600">{formatNum(r.clicks)}</div>
+          </div>
+          <div className="text-center bg-blue-50 rounded-xl p-2.5">
+            <div className="text-[10px] text-blue-600 font-bold mb-0.5">CTR</div>
+            <div className="text-[12px] font-black text-blue-700">{formatPct(r.ctr)}</div>
+          </div>
+        </div>
+      </div>
+    );
+
+    // 애드부스트 섹션
+    const GFAAdvSection = ({ data }) => {
+      const [selCat,  setSelCat]  = useState('전체');
+      const [sortKey, setSortKey] = useState('spend');
+      const [sortDir, setSortDir] = useState('desc');
+      const [page,    setPage]    = useState(1);
+
+      const catStats = useMemo(() => {
+        const s = { '전체': { spend:0,conv:0,revenue:0,cart:0,clicks:0 } };
+        macroCategories.forEach(c => s[c]={spend:0,conv:0,revenue:0,cart:0,clicks:0});
+        data.forEach(d => ['전체',d.category].forEach(k => {
+          if(!s[k]) return;
+          s[k].spend+=d.spend; s[k].conv+=d.conv; s[k].revenue+=d.revenue; s[k].cart+=d.cart; s[k].clicks+=d.clicks;
+        }));
+        return s;
+      },[data]);
+
+      const modelRows = useMemo(() => {
+        const src = selCat==='전체' ? data : data.filter(d=>d.category===selCat);
+        const map = {};
+        src.forEach(d => {
+          const key = d.model+'||'+d.name;
+          if(!map[key]) map[key]={name:d.name,model:d.model,category:d.category,spend:0,impressions:0,clicks:0,conv:0,revenue:0,cart:0};
+          map[key].spend+=d.spend; map[key].impressions+=d.impressions; map[key].clicks+=d.clicks;
+          map[key].conv+=d.conv; map[key].revenue+=d.revenue; map[key].cart+=d.cart;
+        });
+        return Object.values(map).map(r=>({...r,
+          roas:r.spend>0?(r.revenue/r.spend)*100:0,
+          cvrConv:r.clicks>0?(r.conv/r.clicks)*100:0,
+          cvrCart:r.clicks>0?(r.cart/r.clicks)*100:0,
+        })).sort((a,b)=>sortDir==='desc'?b[sortKey]-a[sortKey]:a[sortKey]-b[sortKey]);
+      },[data,selCat,sortKey,sortDir]);
+
+      const activeCats = macroCategories.filter(c=>data.some(d=>d.category===c));
+      const handleSort = (k)=>{ setSortKey(k); setSortDir(sortKey===k&&sortDir==='desc'?'asc':'desc'); setPage(1); };
+      const handleCat  = (c)=>{ setSelCat(c); setPage(1); };
+      const totalPages = Math.ceil(modelRows.length/PAGE_SIZE);
+      const pagedRows  = modelRows.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
+      const SI = ({k})=><span className={`ml-1 text-[10px] ${sortKey===k?'text-blue-600':'text-slate-300'}`}>{sortKey===k&&sortDir==='asc'?'▲':'▼'}</span>;
+      const sum = catStats[selCat==='전체'?'전체':selCat]||{};
+
+      return (
+        <div className="bg-white rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200 overflow-hidden mb-4 sm:mb-6">
+          <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-100 flex items-center justify-between">
+            <h3 className="font-black text-slate-900 text-[15px] sm:text-[18px] flex items-center gap-2">
+              <span className="text-blue-500">📦</span> 애드부스트 (상품형)
+            </h3>
+            <span className="text-[11px] sm:text-[12px] text-slate-400 font-bold hidden sm:block">모델명 = 판매자상품코드</span>
+          </div>
+          <div className="p-3 sm:p-6 space-y-4 sm:space-y-5">
+            <div className="flex overflow-x-auto gap-2 pb-1 scrollbar-hide">
+              {['전체',...activeCats].map(cat=>(
+                <button key={cat} onClick={()=>handleCat(cat)}
+                  className={`whitespace-nowrap px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-[12px] sm:text-[14px] font-bold transition-all ${selCat===cat?'bg-blue-600 text-white shadow-md':'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
+                  {cat}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 p-3 sm:p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              {[
+                { label:'집행비용',   val:formatKrw(sum.spend||0),     color:'text-amber-600' },
+                { label:'구매전환수', val:`${formatNum(sum.conv||0)}건`, color:'text-green-600' },
+                { label:'전환매출',   val:formatKrw(sum.revenue||0),   color:'text-green-600' },
+                { label:'ROAS',       val:formatPct((sum.spend||0)>0?(sum.revenue/sum.spend)*100:0,0),
+                  color:((sum.spend||0)>0&&(sum.revenue/sum.spend)*100>=400)?'text-green-600':'text-rose-500' },
+              ].map((c,i)=>(
+                <div key={i} className="text-center">
+                  <div className={`text-[11px] sm:text-[12px] font-bold ${c.color} mb-0.5`}>{c.label}</div>
+                  <div className="text-[14px] sm:text-[16px] font-black text-slate-900">{c.val}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-[12px] sm:text-[13px] font-black text-slate-500">
+                모델별 세부 성과
+                {selCat!=='전체'&&<span className="text-blue-600 ml-1">({selCat})</span>}
+                <span className="ml-2 text-slate-400 font-bold">전체 {modelRows.length}개</span>
+              </div>
+              {totalPages>1&&<div className="text-[11px] sm:text-[12px] text-slate-400 font-bold">{(page-1)*PAGE_SIZE+1}–{Math.min(page*PAGE_SIZE,modelRows.length)} / {modelRows.length}</div>}
+            </div>
+            {/* 모바일 카드 */}
+            <div className="block sm:hidden rounded-xl border border-slate-200 overflow-hidden">
+              {pagedRows.length>0
+                ? pagedRows.map((r,i)=><AdvMobileCard key={i} r={r} rank={(page-1)*PAGE_SIZE+i+1} />)
+                : <div className="py-8 text-center text-slate-400 font-bold text-[13px]">데이터 없음</div>
+              }
+            </div>
+            {/* 데스크탑 테이블 */}
+            <div className="hidden sm:block overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-[12px] sm:text-[13px] min-w-[1000px]">
+                <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                  <tr>
+                    <th className="px-3 py-3 text-center text-slate-300 w-8">#</th>
+                    <th className="px-3 py-3 text-left whitespace-nowrap">상품명</th>
+                    <th className="px-3 py-3 text-left whitespace-nowrap">모델명</th>
+                    {selCat==='전체'&&<th className="px-3 py-3 text-left whitespace-nowrap">카테고리</th>}
+                    <th className="px-3 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('spend')}>집행비용 <SI k="spend"/></th>
+                    <th className="px-3 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('impressions')}>노출수 <SI k="impressions"/></th>
+                    <th className="px-3 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('clicks')}>클릭수 <SI k="clicks"/></th>
+                    <th className="px-3 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('conv')}>구매전환 <SI k="conv"/></th>
+                    <th className="px-3 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('cvrConv')}>전환율(구매) <SI k="cvrConv"/></th>
+                    <th className="px-3 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('revenue')}>전환매출 <SI k="revenue"/></th>
+                    <th className="px-3 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('roas')}>ROAS <SI k="roas"/></th>
+                    <th className="px-3 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('cart')}>장바구니 <SI k="cart"/></th>
+                    <th className="px-3 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('cvrCart')}>전환율(장바구니) <SI k="cvrCart"/></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {pagedRows.length>0 ? pagedRows.map((r,i)=>(
+                    <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-3 py-3 text-center text-[11px] text-slate-300 font-bold">{(page-1)*PAGE_SIZE+i+1}</td>
+                      <td className="px-3 py-3 font-bold text-slate-700 max-w-[160px]">
+                        <Tooltip text={r.name}><div className="truncate text-[11px] cursor-default">{r.name}</div></Tooltip>
+                      </td>
+                      <td className="px-3 py-3 font-black text-slate-900 whitespace-nowrap">
+                        <span className={r.model==='(미매칭)'?'text-slate-400':''}>{r.model}</span>
+                      </td>
+                      {selCat==='전체'&&<td className="px-3 py-3 font-bold text-slate-400 whitespace-nowrap text-[11px]">{r.category}</td>}
+                      <td className="px-3 py-3 text-right font-bold whitespace-nowrap">{formatKrw(r.spend)}</td>
+                      <td className="px-3 py-3 text-right font-bold text-slate-400 whitespace-nowrap">{formatNum(r.impressions)}</td>
+                      <td className="px-3 py-3 text-right font-bold whitespace-nowrap">{formatNum(r.clicks)}</td>
+                      <td className="px-3 py-3 text-right font-black text-green-600 whitespace-nowrap">{formatNum(r.conv)}건</td>
+                      <td className="px-3 py-3 text-right font-bold text-blue-600 whitespace-nowrap">{formatPct(r.cvrConv)}</td>
+                      <td className="px-3 py-3 text-right font-black whitespace-nowrap">{formatKrw(r.revenue)}</td>
+                      <td className={`px-3 py-3 text-right font-black whitespace-nowrap ${r.roas>=400?'text-green-600':'text-rose-500'}`}>{formatPct(r.roas,0)}</td>
+                      <td className="px-3 py-3 text-right font-bold text-purple-600 whitespace-nowrap">{formatNum(r.cart)}건</td>
+                      <td className="px-3 py-3 text-right font-bold text-purple-500 whitespace-nowrap">{formatPct(r.cvrCart)}</td>
+                    </tr>
+                  )):(
+                    <tr><td colSpan="13" className="px-4 py-8 text-center text-slate-400 font-bold">데이터 없음</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={page} totalPages={totalPages} setPage={setPage} />
+          </div>
+        </div>
+      );
+    };
+
+    // 소재보고서 섹션
+    const GFASojaSection = ({ data }) => {
+      const [activeTab, setActiveTab] = useState('DA');
+      const [sortKey,   setSortKey]   = useState('spend');
+      const [sortDir,   setSortDir]   = useState('desc');
+
+      const campRows = useMemo(() => {
+        const src = data.filter(d=>d.ad_type===activeTab);
+        const map = {};
+        src.forEach(d => {
+          if(!map[d.campaign]) map[d.campaign]={campaign:d.campaign,spend:0,impressions:0,clicks:0,conv:0,revenue:0,cart:0};
+          map[d.campaign].spend+=d.spend; map[d.campaign].impressions+=d.impressions;
+          map[d.campaign].clicks+=d.clicks; map[d.campaign].conv+=d.conv;
+          map[d.campaign].revenue+=d.revenue; map[d.campaign].cart+=d.cart;
+        });
+        return Object.values(map).map(r=>({...r,
+          cpm:r.impressions>0?r.spend/r.impressions*1000:0,
+          ctr:r.impressions>0?r.clicks/r.impressions*100:0,
+          cvrConv:r.clicks>0?r.conv/r.clicks*100:0,
+          cvrCart:r.clicks>0?r.cart/r.clicks*100:0,
+        })).sort((a,b)=>sortDir==='desc'?b[sortKey]-a[sortKey]:a[sortKey]-b[sortKey]);
+      },[data,activeTab,sortKey,sortDir]);
+
+      const handleSort = (k)=>{ setSortKey(k); setSortDir(sortKey===k&&sortDir==='desc'?'asc':'desc'); };
+      const SI = ({k})=><span className={`ml-1 text-[10px] ${sortKey===k?'text-blue-600':'text-slate-300'}`}>{sortKey===k&&sortDir==='asc'?'▲':'▼'}</span>;
+      const daCount  = data.filter(d=>d.ad_type==='DA').length;
+      const catCount = data.filter(d=>d.ad_type==='카탈로그').length;
+      const total    = campRows.reduce((a,r)=>({spend:a.spend+r.spend,impressions:a.impressions+r.impressions,clicks:a.clicks+r.clicks,conv:a.conv+r.conv,revenue:a.revenue+r.revenue,cart:a.cart+r.cart}),{spend:0,impressions:0,clicks:0,conv:0,revenue:0,cart:0});
+
+      return (
+        <div className="bg-white rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200 overflow-hidden mb-4 sm:mb-6">
+          <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-100 flex items-center justify-between">
+            <h3 className="font-black text-slate-900 text-[15px] sm:text-[18px] flex items-center gap-2"><span>🎨</span> DA / 카탈로그 소재보고서</h3>
+            <span className="text-[11px] sm:text-[12px] text-slate-400 font-bold hidden sm:block">캠페인별 전환지표</span>
+          </div>
+          <div className="p-3 sm:p-6 space-y-4">
+            <div className="flex bg-slate-100 p-1 rounded-xl gap-1 w-fit">
+              {[{key:'DA',label:`DA 영역 (${daCount}개)`},{key:'카탈로그',label:`카탈로그 · 리타겟 (${catCount}개)`}].map(tab=>(
+                <button key={tab.key} onClick={()=>{setActiveTab(tab.key);setSortKey('spend');setSortDir('desc');}}
+                  className={`px-3 sm:px-5 py-1.5 sm:py-2 text-[12px] sm:text-[13px] font-bold rounded-lg transition-all whitespace-nowrap ${activeTab===tab.key?'bg-white shadow text-blue-600':'text-slate-500 hover:bg-white/50'}`}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            {/* 모바일 카드 */}
+            <div className="block sm:hidden rounded-xl border border-slate-200 overflow-hidden">
+              {campRows.length>0
+                ? campRows.map((r,i)=><SojaMobileCard key={i} r={r} />)
+                : <div className="py-8 text-center text-slate-400 font-bold text-[13px]">데이터 없음</div>
+              }
+            </div>
+            {/* 데스크탑 테이블 */}
+            <div className="hidden sm:block overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-[13px] min-w-[900px]">
+                <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                  <tr>
+                    <th className="px-4 py-3 text-left whitespace-nowrap">캠페인명</th>
+                    <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('spend')}>집행비용 <SI k="spend"/></th>
+                    <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('impressions')}>노출수 <SI k="impressions"/></th>
+                    <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('cpm')}>CPM <SI k="cpm"/></th>
+                    <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('clicks')}>클릭수 <SI k="clicks"/></th>
+                    <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('ctr')}>CTR <SI k="ctr"/></th>
+                    <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('conv')}>구매전환 <SI k="conv"/></th>
+                    <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('cvrConv')}>전환율(구매) <SI k="cvrConv"/></th>
+                    <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('revenue')}>구매매출 <SI k="revenue"/></th>
+                    <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('cart')}>장바구니 <SI k="cart"/></th>
+                    <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 whitespace-nowrap" onClick={()=>handleSort('cvrCart')}>전환율(장바구니) <SI k="cvrCart"/></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {campRows.map((r,i)=>(
+                    <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-4 py-3 font-black text-slate-900 max-w-[220px]">
+                        <Tooltip text={r.campaign}><div className="truncate cursor-default">{r.campaign}</div></Tooltip>
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold whitespace-nowrap">{formatKrw(r.spend)}</td>
+                      <td className="px-4 py-3 text-right font-bold text-slate-400 whitespace-nowrap">{formatNum(r.impressions)}</td>
+                      <td className="px-4 py-3 text-right font-bold whitespace-nowrap">{formatKrw(r.cpm)}</td>
+                      <td className="px-4 py-3 text-right font-bold whitespace-nowrap">{formatNum(r.clicks)}</td>
+                      <td className="px-4 py-3 text-right font-bold text-blue-600 whitespace-nowrap">{formatPct(r.ctr)}</td>
+                      <td className="px-4 py-3 text-right font-black text-green-600 whitespace-nowrap">{formatNum(r.conv)}건</td>
+                      <td className="px-4 py-3 text-right font-bold text-blue-600 whitespace-nowrap">{formatPct(r.cvrConv)}</td>
+                      <td className="px-4 py-3 text-right font-black whitespace-nowrap">{formatKrw(r.revenue)}</td>
+                      <td className="px-4 py-3 text-right font-bold text-purple-600 whitespace-nowrap">{formatNum(r.cart)}건</td>
+                      <td className="px-4 py-3 text-right font-bold text-purple-500 whitespace-nowrap">{formatPct(r.cvrCart)}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-slate-900 text-white font-black">
+                    <td className="px-4 py-3 whitespace-nowrap">합계</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">{formatKrw(total.spend)}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">{formatNum(total.impressions)}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">{total.impressions>0?formatKrw(total.spend/total.impressions*1000):'-'}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">{formatNum(total.clicks)}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">{total.impressions>0?formatPct(total.clicks/total.impressions*100):'-'}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">{formatNum(total.conv)}건</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">{total.clicks>0?formatPct(total.conv/total.clicks*100):'-'}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">{formatKrw(total.revenue)}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">{formatNum(total.cart)}건</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">{total.clicks>0?formatPct(total.cart/total.clicks*100):'-'}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // GFA 페이지 (rawData: gfa_data.csv 파싱 결과)
+    const GFAPage = ({ rawData }) => {
+      const [selMonths, setSelMonths] = useState([String(new Date().getMonth()+1)]);
+      const filtered = useMemo(() => rawData.filter(d=>selMonths.includes(d.month)), [rawData, selMonths]);
+      const advData  = useMemo(() => filtered.filter(d=>d.subtype==='애드부스트'), [filtered]);
+      const sojaData = useMemo(() => filtered.filter(d=>d.subtype==='소재보고서'), [filtered]);
+
+      return (
+        <>
+          <GFAFilterSection selMonths={selMonths} setSelMonths={setSelMonths} />
+          <GFASummaryBar data={filtered} />
+          <GFAAdvSection data={advData} />
+          <GFASojaSection data={sojaData} />
+        </>
+      );
+    };
+
+    // ==========================================
+    // 3. SA 화면 구성 부품(Components)
     // ==========================================
     
     const PAGES = ['SA', 'GFA'];
@@ -339,6 +804,12 @@
       const [isLoading, setIsLoading] = useState(true);
       const [loadError, setLoadError] = useState(false);
 
+      // GFA 데이터 (GFA 탭 첫 진입 시 지연 로드)
+      const [gfaRawData,  setGfaRawData]  = useState([]);
+      const [gfaLoading,  setGfaLoading]  = useState(false);
+      const [gfaLoaded,   setGfaLoaded]   = useState(false);
+      const [gfaError,    setGfaError]    = useState(false);
+
       const [page, setPage] = useState('SA');
       const [selectedMonths, setSelectedMonths] = useState(ALL_MONTHS);
       const [selectedCategory, setSelectedCategory] = useState('전체');
@@ -353,6 +824,38 @@
       const [targetCvr, setTargetCvr] = useState({'전체': 3.5, 'TV': 2.5, '에어컨': 1.7, '시스템에어컨': 1.5, '공기청정기': 3, '청소기': 2.5, '제습기': 2, 'SD': 2.0, '그 외 상품': 8});
 
       const cleanNum = (val) => { if (!val) return 0; const num = Number(val.toString().replace(/,/g, '').trim()); return isNaN(num) ? 0 : num; };
+
+      // GFA 데이터 지연 로드 (GFA 탭 첫 클릭 시 1회만 실행)
+      useEffect(() => {
+        if (page !== 'GFA' || gfaLoaded || gfaLoading) return;
+        setGfaLoading(true);
+        Papa.parse('output/gfa_data.csv', {
+          download: true, header: true, skipEmptyLines: true,
+          transformHeader: h => h.trim(),
+          complete: (results) => {
+            const parsed = results.data.map(row => {
+              const match = (row['date'] || '').match(/(\d{4})[-./](\d{1,2})/);
+              return {
+                month:      match ? parseInt(match[2], 10).toString() : '1',
+                subtype:    row['subtype']  || '',
+                model:      row['model']    || '(미매칭)',
+                name:       row['name']     || '',
+                category:   row['category'] || '그 외 상품',
+                ad_type:    row['ad_type']  || 'DA',
+                campaign:   row['campaign'] || '',
+                spend:      cleanNum(row['spend']),
+                impressions:cleanNum(row['impressions']),
+                clicks:     cleanNum(row['clicks']),
+                conv:       cleanNum(row['conv']),
+                revenue:    cleanNum(row['revenue']),
+                cart:       cleanNum(row['cart']),
+              };
+            });
+            setGfaRawData(parsed); setGfaLoaded(true); setGfaLoading(false);
+          },
+          error: () => { setGfaError(true); setGfaLoading(false); }
+        });
+      }, [page, gfaLoaded, gfaLoading]);
 
       useEffect(() => {
         Papa.parse('output/sa_data.csv', {
@@ -460,11 +963,11 @@
             <TopHeader page={page} setPage={setPage} />
 
             {page === 'GFA' ? (
-              <div className="flex flex-col items-center justify-center py-32 text-slate-400">
-                <div className="text-[48px] mb-4">📊</div>
-                <div className="text-[20px] font-bold mb-2">GFA 페이지 준비 중</div>
-                <div className="text-[14px]">GFA 광고 데이터 연동 후 이 페이지가 활성화됩니다.</div>
-              </div>
+              gfaLoading
+                ? <div className="flex h-64 items-center justify-center font-black text-[18px] sm:text-[24px] text-slate-400">GFA 데이터를 불러오는 중입니다...</div>
+                : gfaError
+                  ? <div className="flex h-64 items-center justify-center font-black text-[16px] text-red-500 text-center p-4">gfa_data.csv 파일을 찾을 수 없습니다.<br/>run_manual.bat 실행 후 다시 시도하세요.</div>
+                  : <GFAPage rawData={gfaRawData} />
             ) : (
               <>
                 <FiltersSection selectedMonths={selectedMonths} setSelectedMonths={setSelectedMonths} selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} />
