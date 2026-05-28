@@ -21,6 +21,46 @@
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
+
+  <!-- 비밀번호 잠금 화면 -->
+  <div id="auth-overlay" style="position:fixed;inset:0;background:#f1f5f9;display:flex;align-items:center;justify-content:center;z-index:9999">
+    <div style="background:white;border-radius:16px;padding:40px 36px;box-shadow:0 4px 32px rgba(0,0,0,0.12);width:300px;text-align:center">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 14px;display:block">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+      </svg>
+      <div style="font-size:17px;font-weight:700;color:#1e293b;margin-bottom:4px">보보 광고 대시보드</div>
+      <div style="font-size:13px;color:#64748b;margin-bottom:22px">비밀번호를 입력하세요</div>
+      <input id="pw-input" type="password" placeholder="비밀번호"
+        style="width:100%;padding:10px 14px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;box-sizing:border-box;margin-bottom:8px;outline:none;font-family:inherit"
+        onkeydown="if(event.key==='Enter')checkPw()">
+      <div id="pw-error" style="color:#ef4444;font-size:12px;margin-bottom:8px;display:none">비밀번호가 틀렸습니다.</div>
+      <button onclick="checkPw()"
+        style="width:100%;padding:10px;background:#3b82f6;color:white;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">
+        확인
+      </button>
+    </div>
+  </div>
+  <script>
+    // 비밀번호 변경: btoa("새비밀번호") 를 브라우저 콘솔에서 실행 후 아래 값 교체
+    var _PW = "Ym9ibzIwMjY="; // bobo2026
+    (function(){
+      if(sessionStorage.getItem("ad_auth")===_PW)
+        document.getElementById("auth-overlay").style.display="none";
+    })();
+    function checkPw(){
+      var v = btoa(unescape(encodeURIComponent(document.getElementById("pw-input").value)));
+      if(v===_PW){
+        sessionStorage.setItem("ad_auth",_PW);
+        document.getElementById("auth-overlay").style.display="none";
+      } else {
+        document.getElementById("pw-error").style.display="block";
+        document.getElementById("pw-input").value="";
+        document.getElementById("pw-input").focus();
+      }
+    }
+  </script>
+
   <div id="root"></div>
 
   <script type="text/babel">
